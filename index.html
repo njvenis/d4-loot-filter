@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>D4 Loot Filter Profile Manager</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; font-size: 14px; padding: 12px; display: flex; gap: 12px; height: 100vh; }
+    #sidebar { width: 220px; flex-shrink: 0; border-right: 1px solid #999; padding-right: 12px; overflow-y: auto; }
+    #sidebar h2 { margin-bottom: 8px; }
+    #sidebar .profile-item { padding: 4px 6px; cursor: pointer; border: 1px solid transparent; }
+    #sidebar .profile-item.active { background: #ddd; border-color: #666; }
+    #sidebar .profile-item:hover { background: #eee; }
+    #sidebar .btn-row { display: flex; gap: 4px; margin-bottom: 8px; }
+    #main { flex: 1; display: flex; gap: 12px; overflow-y: auto; }
+    #editor { flex: 1; min-width: 300px; }
+    #output { flex: 1; min-width: 300px; border-left: 1px solid #999; padding-left: 12px; }
+    label { display: block; margin-top: 8px; font-weight: bold; }
+    input[type="text"], input[type="number"], select { width: 100%; padding: 4px; margin-top: 2px; font-family: monospace; }
+    select[multiple] { height: 100px; }
+    button { padding: 4px 8px; cursor: pointer; font-family: monospace; }
+    .rule { margin-bottom: 6px; padding: 4px; border: 1px solid #ccc; }
+    .rule-num { font-weight: bold; margin-right: 4px; }
+    .rule-vis { font-weight: bold; }
+    .rule-cond { margin-left: 16px; color: #444; }
+    .error-msg { color: red; font-weight: bold; }
+    #no-profile { color: #666; font-style: italic; }
+    .cb-group { margin-top: 2px; }
+    .cb-group label { display: inline; font-weight: normal; margin-left: 4px; }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h2>Profiles</h2>
+    <div class="btn-row">
+      <button id="btn-new">New</button>
+      <button id="btn-clone">Clone</button>
+      <button id="btn-delete">Delete</button>
+    </div>
+    <div id="profile-list"></div>
+  </div>
+  <div id="main">
+    <div id="editor">
+      <div id="no-profile">No profile selected. Click "New" to create one.</div>
+      <div id="editor-form" style="display:none">
+        <label for="ed-class">Class</label>
+        <select id="ed-class"></select>
+
+        <label for="ed-buildname">Build Name</label>
+        <input type="text" id="ed-buildname">
+
+        <label for="ed-itempower">Min Item Power (blank = none)</label>
+        <input type="number" id="ed-itempower" min="0" max="999">
+
+        <label for="ed-ga">Min Greater Affixes (0-4)</label>
+        <select id="ed-ga">
+          <option value="0">0</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select>
+
+        <label><input type="checkbox" id="ed-ancestral"> Ancestral Only</label>
+
+        <label>Required Affixes (item must have ALL)</label>
+        <div id="ed-required" class="cb-group"></div>
+
+        <label>Optional Affixes (item must have at least one)</label>
+        <div id="ed-optional" class="cb-group"></div>
+
+        <label>Show Uniques</label>
+        <div id="ed-uniques" class="cb-group"></div>
+
+        <label>Show Talisman Sets</label>
+        <div id="ed-talisman" class="cb-group"></div>
+
+        <label for="ed-hiderarity">Hide Floor Rarity</label>
+        <select id="ed-hiderarity">
+          <option value="None">None</option>
+          <option value="Magic">Magic</option>
+          <option value="Rare">Rare (hides Magic + Rare)</option>
+        </select>
+      </div>
+    </div>
+    <div id="output">
+      <h2>Compiled Rules</h2>
+      <button id="btn-copy" style="margin-bottom:8px">Copy as text</button>
+      <div id="rule-output"></div>
+    </div>
+  </div>
+<script>
+"use strict";
+
+const GAME_DATA = {
+  classes: ["Warlock", "Paladin"],
+
+  affixes: {
+    // Warlock affixes
+    "wlk-int":        { id: "wlk-int",        name: "Intelligence",             class: "Warlock" },
+    "wlk-cdr":        { id: "wlk-cdr",        name: "Cooldown Reduction",       class: "Warlock" },
+    "wlk-crit":       { id: "wlk-crit",       name: "Critical Strike Chance",   class: "Warlock" },
+    "wlk-critdmg":    { id: "wlk-critdmg",    name: "Critical Strike Damage",   class: "Warlock" },
+    "wlk-dot":        { id: "wlk-dot",        name: "Damage Over Time",         class: "Warlock" },
+    // Paladin affixes
+    "pal-str":        { id: "pal-str",        name: "Strength",                 class: "Paladin" },
+    "pal-cdr":        { id: "pal-cdr",        name: "Cooldown Reduction",       class: "Paladin" },
+    "pal-crit":       { id: "pal-crit",       name: "Critical Strike Chance",   class: "Paladin" },
+    "pal-critdmg":    { id: "pal-critdmg",    name: "Critical Strike Damage",   class: "Paladin" },
+    "pal-thorns":     { id: "pal-thorns",     name: "Thorns",                   class: "Paladin" },
+  },
+
+  uniques: {
+    // Warlock uniques
+    "wlk-u1": { id: "wlk-u1", name: "Skull of Endless Torment",  class: "Warlock" },
+    "wlk-u2": { id: "wlk-u2", name: "Veil of Shadow",            class: "Warlock" },
+    "wlk-u3": { id: "wlk-u3", name: "Ebon Circle",               class: "Warlock" },
+    // Paladin uniques
+    "pal-u1": { id: "pal-u1", name: "Herald of the Oak",          class: "Paladin" },
+    "pal-u2": { id: "pal-u2", name: "Arreat's Bearing",           class: "Paladin" },
+    "pal-u3": { id: "pal-u3", name: "Sacred Charge",              class: "Paladin" },
+  },
+
+  talismanSets: {
+    "tal-wlk-curse":  { id: "tal-wlk-curse",  name: "Curse Amplification Set",  class: "Warlock" },
+    "tal-wlk-summon": { id: "tal-wlk-summon", name: "Summoning Mastery Set",    class: "Warlock" },
+    "tal-pal-holy":   { id: "tal-pal-holy",   name: "Holy Radiance Set",        class: "Paladin" },
+    "tal-pal-shield": { id: "tal-pal-shield", name: "Shieldbearer Set",         class: "Paladin" },
+  },
+};
+
+function makeProfile(overrides = {}) {
+  return {
+    id: overrides.id || "test-id",
+    class: overrides.class || "Warlock",
+    buildName: overrides.buildName || "Test Build",
+    minItemPower: overrides.minItemPower !== undefined ? overrides.minItemPower : null,
+    minGreaterAffixes: overrides.minGreaterAffixes || 0,
+    ancestralOnly: overrides.ancestralOnly || false,
+    requiredAffixes: overrides.requiredAffixes || [],
+    optionalAffixes: overrides.optionalAffixes || [],
+    showUniques: overrides.showUniques || [],
+    showTalismanSets: overrides.showTalismanSets || [],
+    hideFloorRarity: overrides.hideFloorRarity || "None",
+  };
+}
+
+// --- compile() ---
+
+function compile(profile) {
+  const rules = [];
+
+  if (profile.showUniques.length > 0) {
+    for (const uid of profile.showUniques) {
+      const u = GAME_DATA.uniques[uid];
+      if (!u) continue;
+      rules.push({
+        visibility: "Show",
+        conditions: [
+          { type: "Is Specific Unique", value: u.name },
+        ],
+      });
+    }
+  }
+
+  if (profile.showTalismanSets.length > 0) {
+    for (const tid of profile.showTalismanSets) {
+      const t = GAME_DATA.talismanSets[tid];
+      if (!t) continue;
+      rules.push({
+        visibility: "Show",
+        conditions: [
+          { type: "Talisman Set Bonus", value: t.name },
+        ],
+      });
+    }
+  }
+
+  if (profile.requiredAffixes.length > 0) {
+    const names = profile.requiredAffixes.map(id => GAME_DATA.affixes[id]?.name).filter(Boolean);
+    if (names.length > 0) {
+      const conditions = [
+        { type: "Item Rarity Match", value: "Legendary" },
+        { type: "Has Required Affixes", value: names.join(", ") },
+      ];
+      if (profile.ancestralOnly) {
+        conditions.push({ type: "Item Properties", value: "Ancestral" });
+      }
+      if (profile.minGreaterAffixes > 0) {
+        conditions.push({ type: "Greater Affix Check", value: String(profile.minGreaterAffixes) });
+      }
+      if (profile.minItemPower != null) {
+        conditions.push({ type: "Item Power Range", value: profile.minItemPower + "+" });
+      }
+      rules.push({ visibility: "Show", conditions });
+    }
+  }
+
+  if (profile.optionalAffixes.length > 0) {
+    const names = profile.optionalAffixes.map(id => GAME_DATA.affixes[id]?.name).filter(Boolean);
+    if (names.length > 0) {
+      const conditions = [
+        { type: "Item Rarity Match", value: "Legendary" },
+        { type: "Has Optional Affixes", value: names.join(", ") },
+      ];
+      if (profile.ancestralOnly) {
+        conditions.push({ type: "Item Properties", value: "Ancestral" });
+      }
+      if (profile.minGreaterAffixes > 0) {
+        conditions.push({ type: "Greater Affix Check", value: String(profile.minGreaterAffixes) });
+      }
+      if (profile.minItemPower != null) {
+        conditions.push({ type: "Item Power Range", value: profile.minItemPower + "+" });
+      }
+      rules.push({ visibility: "Show", conditions });
+    }
+  }
+
+  if (profile.hideFloorRarity === "Magic") {
+    rules.push({
+      visibility: "Hide All",
+      conditions: [{ type: "Item Rarity Match", value: "Magic" }],
+    });
+  } else if (profile.hideFloorRarity === "Rare") {
+    rules.push({
+      visibility: "Hide All",
+      conditions: [{ type: "Item Rarity Match", value: "Magic" }],
+    });
+    rules.push({
+      visibility: "Hide All",
+      conditions: [{ type: "Item Rarity Match", value: "Rare" }],
+    });
+  }
+
+  if (rules.length > 25) {
+    throw new Error("Compiled rules exceed the 25-rule D4 limit (" + rules.length + " rules). Simplify the profile.");
+  }
+
+  return rules;
+}
+
+// --- Inline test runner ---
+
+function runTests() {
+  let passed = 0;
+  let failed = 0;
+
+  function assert(condition, name) {
+    if (condition) {
+      console.log("%c PASS %c " + name, "background:green;color:white;font-weight:bold", "");
+      passed++;
+    } else {
+      console.error("%c FAIL %c " + name, "background:red;color:white;font-weight:bold", "");
+      failed++;
+    }
+  }
+
+  function assertThrows(fn, name) {
+    try {
+      fn();
+      console.error("%c FAIL %c " + name + " (expected throw)", "background:red;color:white;font-weight:bold", "");
+      failed++;
+    } catch (e) {
+      console.log("%c PASS %c " + name + " (threw: " + e.message + ")", "background:green;color:white;font-weight:bold", "");
+      passed++;
+    }
+  }
+
+  // 1. Empty profile → no rules
+  {
+    const rules = compile(makeProfile());
+    assert(rules.length === 0, "empty profile returns 0 rules");
+  }
+
+  // 2. Single required affix
+  {
+    const rules = compile(makeProfile({ requiredAffixes: ["wlk-int"] }));
+    assert(rules.length === 1, "single required affix → 1 rule");
+    assert(rules[0].visibility === "Show", "single required affix → Show");
+    assert(rules[0].conditions.some(c => c.type === "Has Required Affixes"), "has Required Affixes condition");
+  }
+
+  // 3. Greater affix threshold of 4
+  {
+    const rules = compile(makeProfile({ requiredAffixes: ["wlk-crit"], minGreaterAffixes: 4 }));
+    assert(rules.length === 1, "GA=4 → 1 rule");
+    const gaCond = rules[0].conditions.find(c => c.type === "Greater Affix Check");
+    assert(gaCond && gaCond.value === "4", "GA condition value is 4");
+  }
+
+  // 4. Talisman set show
+  {
+    const rules = compile(makeProfile({ showTalismanSets: ["tal-wlk-curse"] }));
+    assert(rules.length === 1, "talisman set → 1 rule");
+    assert(rules[0].conditions.some(c => c.type === "Talisman Set Bonus"), "has Talisman Set Bonus condition");
+  }
+
+  // 5. hideFloorRarity with show exceptions — show rules above hide rules
+  {
+    const rules = compile(makeProfile({
+      requiredAffixes: ["wlk-int"],
+      hideFloorRarity: "Rare",
+    }));
+    const showIdx = rules.findIndex(r => r.visibility === "Show");
+    const hideIdx = rules.findIndex(r => r.visibility === "Hide All");
+    assert(showIdx < hideIdx, "Show rules come before Hide rules");
+    assert(rules.filter(r => r.visibility === "Hide All").length === 2, "hideFloorRarity=Rare hides Magic + Rare");
+  }
+
+  // 6. hideFloorRarity=Magic hides only magic
+  {
+    const rules = compile(makeProfile({ hideFloorRarity: "Magic" }));
+    assert(rules.length === 1, "hideFloorRarity=Magic → 1 hide rule");
+    assert(rules[0].conditions[0].value === "Magic", "hides Magic rarity");
+  }
+
+  // 7. Deterministic — same input same output
+  {
+    const p = makeProfile({ requiredAffixes: ["pal-str", "pal-cdr"], showUniques: ["pal-u1"], hideFloorRarity: "Magic" });
+    const r1 = JSON.stringify(compile(p));
+    const r2 = JSON.stringify(compile(p));
+    assert(r1 === r2, "compile is deterministic");
+  }
+
+  // 8. Uniques generate individual Show rules
+  {
+    const rules = compile(makeProfile({ showUniques: ["wlk-u1", "wlk-u2", "wlk-u3"] }));
+    assert(rules.length === 3, "3 uniques → 3 rules");
+    assert(rules.every(r => r.visibility === "Show"), "all unique rules are Show");
+  }
+
+  // 9. Ancestral-only adds Item Properties condition
+  {
+    const rules = compile(makeProfile({ requiredAffixes: ["wlk-int"], ancestralOnly: true }));
+    assert(rules[0].conditions.some(c => c.type === "Item Properties" && c.value === "Ancestral"), "ancestralOnly adds Ancestral condition");
+  }
+
+  // 10. Item power threshold
+  {
+    const rules = compile(makeProfile({ requiredAffixes: ["wlk-int"], minItemPower: 750 }));
+    assert(rules[0].conditions.some(c => c.type === "Item Power Range" && c.value === "750+"), "minItemPower adds Item Power Range condition");
+  }
+
+  // 11. 25-rule overflow throws
+  {
+    const allAffixIds = Object.keys(GAME_DATA.affixes);
+    const allUniqueIds = Object.keys(GAME_DATA.uniques);
+    const allTalismanIds = Object.keys(GAME_DATA.talismanSets);
+    const bloatedProfile = makeProfile({
+      showUniques: allUniqueIds.concat(allUniqueIds, allUniqueIds, allUniqueIds, allUniqueIds),
+      hideFloorRarity: "Rare",
+    });
+    assertThrows(() => compile(bloatedProfile), "overflow beyond 25 rules throws");
+  }
+
+  // 12. Combined profile — all features
+  {
+    const rules = compile(makeProfile({
+      requiredAffixes: ["wlk-int", "wlk-cdr"],
+      optionalAffixes: ["wlk-crit"],
+      showUniques: ["wlk-u1"],
+      showTalismanSets: ["tal-wlk-curse"],
+      minGreaterAffixes: 2,
+      ancestralOnly: true,
+      minItemPower: 800,
+      hideFloorRarity: "Rare",
+    }));
+    assert(rules.length <= 25, "combined profile within 25-rule cap");
+    const lastShowIdx = rules.reduce((max, r, i) => r.visibility === "Show" ? i : max, -1);
+    const firstHideIdx = rules.findIndex(r => r.visibility === "Hide All");
+    assert(lastShowIdx < firstHideIdx, "all Shows before all Hides in combined profile");
+  }
+
+  console.log("\n--- Test results: " + passed + " passed, " + failed + " failed ---");
+  if (failed > 0) {
+    console.error("SOME TESTS FAILED");
+  }
+}
+
+runTests();
+
+// --- App state ---
+
+const STORAGE_KEY = "d4-loot-filter-profiles";
+
+const state = {
+  profiles: [],
+  activeProfileId: null,
+};
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.profiles));
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) state.profiles = JSON.parse(raw);
+  } catch (e) {
+    console.error("Failed to load state:", e);
+  }
+}
+
+function getActiveProfile() {
+  return state.profiles.find(p => p.id === state.activeProfileId) || null;
+}
+
+function newProfileId() {
+  return crypto.randomUUID();
+}
+
+// --- UI rendering ---
+
+function renderProfileList() {
+  const el = document.getElementById("profile-list");
+  el.innerHTML = "";
+  for (const p of state.profiles) {
+    const div = document.createElement("div");
+    div.className = "profile-item" + (p.id === state.activeProfileId ? " active" : "");
+    div.textContent = p.buildName + " (" + p.class + ")";
+    div.addEventListener("click", () => {
+      state.activeProfileId = p.id;
+      renderAll();
+    });
+    el.appendChild(div);
+  }
+}
+
+function renderEditor() {
+  const profile = getActiveProfile();
+  const form = document.getElementById("editor-form");
+  const noProfile = document.getElementById("no-profile");
+
+  if (!profile) {
+    form.style.display = "none";
+    noProfile.style.display = "block";
+    return;
+  }
+
+  form.style.display = "block";
+  noProfile.style.display = "none";
+
+  document.getElementById("ed-class").value = profile.class;
+  document.getElementById("ed-buildname").value = profile.buildName;
+  document.getElementById("ed-itempower").value = profile.minItemPower != null ? profile.minItemPower : "";
+  document.getElementById("ed-ga").value = String(profile.minGreaterAffixes);
+  document.getElementById("ed-ancestral").checked = profile.ancestralOnly;
+  document.getElementById("ed-hiderarity").value = profile.hideFloorRarity;
+
+  renderCheckboxGroup("ed-required", GAME_DATA.affixes, profile.class, profile.requiredAffixes);
+  renderCheckboxGroup("ed-optional", GAME_DATA.affixes, profile.class, profile.optionalAffixes);
+  renderCheckboxGroup("ed-uniques", GAME_DATA.uniques, profile.class, profile.showUniques);
+  renderCheckboxGroup("ed-talisman", GAME_DATA.talismanSets, profile.class, profile.showTalismanSets);
+}
+
+function renderCheckboxGroup(containerId, dataObj, selectedClass, selectedIds) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = "";
+  const filtered = Object.values(dataObj).filter(item => item.class === selectedClass);
+  for (const item of filtered) {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = item.id;
+    cb.checked = selectedIds.includes(item.id);
+    cb.addEventListener("change", () => onEditorChange());
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(" " + item.name));
+    container.appendChild(label);
+    container.appendChild(document.createElement("br"));
+  }
+}
+
+function renderOutput() {
+  const el = document.getElementById("rule-output");
+  const profile = getActiveProfile();
+
+  if (!profile) {
+    el.innerHTML = "<em>No profile selected.</em>";
+    return;
+  }
+
+  try {
+    const rules = compile(profile);
+    if (rules.length === 0) {
+      el.innerHTML = "<em>No rules. Configure the profile to generate filter rules.</em>";
+      return;
+    }
+    el.innerHTML = "";
+    rules.forEach((rule, i) => {
+      const div = document.createElement("div");
+      div.className = "rule";
+      const header = document.createElement("div");
+      header.innerHTML = '<span class="rule-num">' + (i + 1) + ".</span> " +
+        '<span class="rule-vis">' + rule.visibility + "</span>";
+      div.appendChild(header);
+      for (const cond of rule.conditions) {
+        const condDiv = document.createElement("div");
+        condDiv.className = "rule-cond";
+        condDiv.textContent = cond.type + ": " + cond.value;
+        div.appendChild(condDiv);
+      }
+      el.appendChild(div);
+    });
+  } catch (e) {
+    el.innerHTML = '<div class="error-msg">' + e.message + "</div>";
+  }
+}
+
+function renderAll() {
+  renderProfileList();
+  renderEditor();
+  renderOutput();
+}
+
+// --- Editor change handler ---
+
+function onEditorChange() {
+  const profile = getActiveProfile();
+  if (!profile) return;
+
+  profile.class = document.getElementById("ed-class").value;
+  profile.buildName = document.getElementById("ed-buildname").value;
+  const ipVal = document.getElementById("ed-itempower").value;
+  profile.minItemPower = ipVal === "" ? null : Number(ipVal);
+  profile.minGreaterAffixes = Number(document.getElementById("ed-ga").value);
+  profile.ancestralOnly = document.getElementById("ed-ancestral").checked;
+  profile.hideFloorRarity = document.getElementById("ed-hiderarity").value;
+
+  profile.requiredAffixes = getCheckedValues("ed-required");
+  profile.optionalAffixes = getCheckedValues("ed-optional");
+  profile.showUniques = getCheckedValues("ed-uniques");
+  profile.showTalismanSets = getCheckedValues("ed-talisman");
+
+  saveState();
+  renderAll();
+}
+
+function getCheckedValues(containerId) {
+  const cbs = document.getElementById(containerId).querySelectorAll("input[type=checkbox]:checked");
+  return Array.from(cbs).map(cb => cb.value);
+}
+
+// --- Button handlers ---
+
+document.getElementById("btn-new").addEventListener("click", () => {
+  const profile = makeProfile({ id: newProfileId(), buildName: "New Build" });
+  state.profiles.push(profile);
+  state.activeProfileId = profile.id;
+  saveState();
+  renderAll();
+});
+
+document.getElementById("btn-clone").addEventListener("click", () => {
+  const src = getActiveProfile();
+  if (!src) return;
+  const clone = JSON.parse(JSON.stringify(src));
+  clone.id = newProfileId();
+  clone.buildName = src.buildName + " (copy)";
+  state.profiles.push(clone);
+  state.activeProfileId = clone.id;
+  saveState();
+  renderAll();
+});
+
+document.getElementById("btn-delete").addEventListener("click", () => {
+  if (!state.activeProfileId) return;
+  state.profiles = state.profiles.filter(p => p.id !== state.activeProfileId);
+  state.activeProfileId = state.profiles.length > 0 ? state.profiles[0].id : null;
+  saveState();
+  renderAll();
+});
+
+document.getElementById("btn-copy").addEventListener("click", () => {
+  const profile = getActiveProfile();
+  if (!profile) return;
+  try {
+    const rules = compile(profile);
+    const text = rules.map((r, i) => {
+      const header = (i + 1) + ". " + r.visibility;
+      const conds = r.conditions.map(c => "   " + c.type + ": " + c.value).join("\n");
+      return header + "\n" + conds;
+    }).join("\n\n");
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById("btn-copy");
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.textContent = "Copy as text"; }, 1500);
+    });
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+// Wire up editor inputs for live updates
+["ed-class", "ed-buildname", "ed-itempower", "ed-ga", "ed-ancestral", "ed-hiderarity"].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener("input", onEditorChange);
+  el.addEventListener("change", onEditorChange);
+});
+
+// Populate class dropdown
+(function initClassDropdown() {
+  const sel = document.getElementById("ed-class");
+  for (const cls of GAME_DATA.classes) {
+    const opt = document.createElement("option");
+    opt.value = cls;
+    opt.textContent = cls;
+    sel.appendChild(opt);
+  }
+})();
+
+// When class changes, re-render checkbox groups to show class-specific items
+document.getElementById("ed-class").addEventListener("change", () => {
+  const profile = getActiveProfile();
+  if (!profile) return;
+  profile.requiredAffixes = [];
+  profile.optionalAffixes = [];
+  profile.showUniques = [];
+  profile.showTalismanSets = [];
+  onEditorChange();
+});
+
+// --- Boot ---
+
+loadState();
+if (state.profiles.length > 0) {
+  state.activeProfileId = state.profiles[0].id;
+}
+renderAll();
+</script>
+</body>
+</html>
