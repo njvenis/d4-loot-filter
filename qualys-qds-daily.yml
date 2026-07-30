@@ -1,0 +1,102 @@
+name: Qualys QDS High/Critical -> GitHub Issues
+
+on:
+  schedule:
+    # 07:00 UTC daily. Actions cron is UTC-only and best-effort (can be delayed
+    # under load). Scheduled workflows auto-disable after 60 days of repo
+    # inactivity — see RUNBOOK.md.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Log what would happen without creating/updating/closing issues"
+        type: boolean
+        default: false
+      qds_min:
+        description: "QDS lower bound for this run (90 = criticals only)"
+        type: string
+        default: "70"
+      track_absence:
+        description: "Record when a QID drops out of the pull (never closes issues)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  # Prevents a manual run overlapping the scheduled one and double-creating.
+  group: qualys-qds-daily
+  cancel-in-progress: false
+
+jobs:
+  raise-issues:
+    runs-on: ubuntu-latest
+    # If the Qualys API is IP-allow-listed, hosted runners are blocked (dynamic
+    # egress IPs). Swap to a self-hosted runner in an allow-listed network:
+    #   runs-on: [self-hosted, linux, qualys-egress]
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Pull Qualys QDS detections and reconcile GitHub issues
+        env:
+          QUALYS_BASE_URL: ${{ secrets.QUALYS_BASE_URL }}
+          QUALYS_USERNAME: ${{ secrets.QUALYS_USERNAME }}
+          QUALYS_PASSWORD: ${{ secrets.QUALYS_PASSWORD }}
+          # PAT (issues write) if provided — required for cross-repo issues;
+          # otherwise falls back to the built-in token for same-repo issues
+          # (enabled by the `permissions: issues: write` block above).
+          GITHUB_TOKEN: ${{ secrets.GH_ISSUES_TOKEN || github.token }}
+          GITHUB_REPO: ${{ github.repository }}
+          QDS_MIN: ${{ inputs.qds_min || '70' }}
+          # Tag scope by numeric ID (TAG_SET_BY=id). Replace before first run —
+          # the job refuses to start on non-numeric entries. Keep the names in
+          # these comments current: they are the only human-readable record.
+          TAG_SET_BY: "id"
+          TAG_INCLUDE: "REPLACE_ME"      # Env: PROD
+          TAG_EXCLUDE: "REPLACE_ME,REPLACE_ME,REPLACE_ME,REPLACE_ME"  # FPS-bootmgmt, Bastions, bootmgmt, DESKTOP
+          DESKTOP_TAG: "REPLACE_ME"      # DESKTOP
+          MAX_ISSUES_PER_RUN: "50"
+          MAX_ASSETS_IN_BODY: "50"
+          TRACK_ABSENCE: ${{ inputs.track_absence == false && 'false' || 'true' }}
+          DRY_RUN: ${{ inputs.dry_run == true && 'true' || 'false' }}
+        run: python qualys_qds_to_github.py
+
+      # Silent failure is the main long-term risk for a scheduled job nobody
+      # watches. Raise (or update) a single ops issue instead. Uses the built-in
+      # gh CLI rather than a third-party action to keep the supply chain small.
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh issue list --label qualys-qds-ops --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "Run failed again: $RUN_URL"
+          else
+            gh issue create \
+              --title "[ops] Qualys QDS alerting run failed" \
+              --label qualys-qds-ops \
+              --body "The scheduled Qualys QDS job failed.
+
+          Run: $RUN_URL
+
+          Common causes: Qualys credential expiry, Qualys API IP allow-listing
+          blocking the runner, or a Qualys API error (the script fails loudly on
+          HTTP-200 error bodies). See RUNBOOK.md.
+
+          Close this issue once resolved — it is reused for repeat failures."
+          fi
