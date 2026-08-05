@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UVM — Architecture &amp; Data Flow Reference</title>
+<style>
+  :root{
+    --ink:#16211f;
+    --paper:#fbfaf7;
+    --panel:#ffffff;
+    --line:#d9d7cf;
+    --teal:#0e5f5b;
+    --teal-soft:#e3edec;
+    --signal:#b4470f;
+    --signal-soft:#f7e8de;
+    --dim:#68706e;
+    --mono:'SF Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--paper);color:var(--ink);font:15px/1.6 'Avenir Next', 'Segoe UI', system-ui, sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 32px 96px;}
+
+  header{border-bottom:3px solid var(--ink);padding-bottom:28px;margin-bottom:8px;}
+  .doc-id{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase;}
+  h1{font-size:34px;font-weight:700;letter-spacing:-.01em;margin-top:10px;}
+  .subtitle{color:var(--dim);margin-top:6px;max-width:640px;}
+
+  nav{display:flex;gap:0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;}
+  nav a{color:var(--dim);text-decoration:none;padding:14px 18px 12px 0;margin-right:18px;border-bottom:2px solid transparent;}
+  nav a:hover{color:var(--teal);}
+
+  section{margin-top:64px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:24px;}
+  .sec-head h2{font-size:21px;font-weight:700;}
+  .sec-tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--teal);background:var(--teal-soft);padding:3px 9px;border-radius:3px;text-transform:uppercase;}
+
+  .note{border-left:3px solid var(--signal);background:var(--signal-soft);padding:14px 18px;margin:20px 0;font-size:14px;}
+  .note strong{color:var(--signal);}
+
+  figure{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:22px;margin:24px 0;}
+  figcaption{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;margin-bottom:16px;}
+  svg{width:100%;height:auto;display:block;}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:18px 0;}
+  th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);border-bottom:2px solid var(--ink);padding:8px 12px 8px 0;}
+  td{border-bottom:1px solid var(--line);padding:9px 12px 9px 0;vertical-align:top;}
+  td.mono, .mono{font-family:var(--mono);font-size:12.5px;}
+  .dir-in{color:var(--teal);font-weight:600;}
+  .dir-out{color:var(--signal);font-weight:600;}
+  .dir-int{color:var(--dim);font-weight:600;}
+
+  .legend{display:flex;flex-wrap:wrap;gap:18px;font-size:12.5px;margin:8px 0 4px;}
+  .legend span{display:flex;align-items:center;gap:7px;}
+  .sw{width:14px;height:14px;border-radius:3px;display:inline-block;}
+
+  p + p{margin-top:12px;}
+  .prose{max-width:760px;}
+  h3{font-size:15px;margin:26px 0 8px;}
+  @media print{ nav{display:none} body{font-size:12px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="doc-id">INFOSEC / UVM / REV 0.3 / INTERNAL</div>
+  <h1>Unified Vulnerability Management</h1>
+  <p class="subtitle">Architecture and data flow reference for the self-hosted, DefectDojo-cored UVM platform on AWS. Prepared for platform engineering review.</p>
+</header>
+
+<nav>
+  <a href="#arch">01 Architecture</a>
+  <a href="#flow-ingest">02 Ingest flow</a>
+  <a href="#flow-close">03 Closure flow</a>
+  <a href="#flow-sync">04 Sync flow</a>
+  <a href="#network">05 Network &amp; ports</a>
+</nav>
+
+<!-- ==================== ARCHITECTURE ==================== -->
+<section id="arch">
+  <div class="sec-head"><h2>System architecture</h2><span class="sec-tag">AWS deployment</span></div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#fff;border:2px solid #b4470f"></span>Custom code — we build</span>
+    <span><span class="sw" style="background:#e3edec;border:1px solid #7ba5a2"></span>Off-the-shelf — we configure</span>
+    <span><span class="sw" style="background:#f1efe9;border:1px dashed #a9a69c"></span>External / SaaS</span>
+  </div>
+
+  <figure>
+    <figcaption>Fig 1 — Deployment architecture, single region</figcaption>
+    <svg viewBox="0 0 1020 700" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif,system-ui,sans-serif">
+      <defs>
+        <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#68706e"/></marker>
+        <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b4470f"/></marker>
+      </defs>
+
+      <!-- external row -->
+      <rect x="20" y="20" width="220" height="58" rx="5" fill="#f1efe9" stroke="#a9a69c" stroke-dasharray="4 3"/>
+      <text x="130" y="45" text-anchor="middle" font-size="13.5" font-weight="600" fill="#3a3f3d">Qualys VMDR</text>
+      <text x="130" y="62" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">qualysapi.*.qualys.com:443</text>
+
+      <rect x="260" y="20" width="220" height="58" rx="5" fill="#f1efe9" stroke="#a9a69c" stroke-dasharray="4 3"/>
+      <text x="370" y="45" text-anchor="middle" font-size="13.5" font-weight="600" fill="#3a3f3d">Sysdig Secure</text>
+      <text x="370" y="62" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">api.*.sysdig.com:443</text>
+
+      <rect x="500" y="20" width="220" height="58" rx="5" fill="#f1efe9" stroke="#a9a69c" stroke-dasharray="4 3"/>
+      <text x="610" y="45" text-anchor="middle" font-size="13.5" font-weight="600" fill="#3a3f3d">GitHub</text>
+      <text x="610" y="62" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">api.github.com:443</text>
+
+      <rect x="740" y="20" width="260" height="58" rx="5" fill="#f1efe9" stroke="#a9a69c" stroke-dasharray="4 3"/>
+      <text x="870" y="45" text-anchor="middle" font-size="13.5" font-weight="600" fill="#3a3f3d">Okta</text>
+      <text x="870" y="62" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">SAML / OIDC · users only</text>
+
+      <!-- VPC -->
+      <rect x="20" y="110" width="980" height="470" rx="8" fill="none" stroke="#16211f" stroke-width="1.6"/>
+      <text x="36" y="134" font-size="11" font-weight="700" letter-spacing="1.5" fill="#16211f">VPC — PRIVATE SUBNETS ONLY</text>
+
+      <!-- egress -->
+      <rect x="380" y="150" width="260" height="46" rx="5" fill="#fff" stroke="#7ba5a2"/>
+      <text x="510" y="170" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">NAT Gateway · egress 443 only</text>
+      <text x="510" y="186" text-anchor="middle" font-size="10.5" fill="#68706e">allow-list: Qualys, Sysdig, GitHub</text>
+
+      <path d="M 130 78 L 130 96 L 450 96 L 450 150" fill="none" stroke="#68706e" stroke-width="1.3" marker-start="url(#m1)"/>
+      <path d="M 370 78 L 370 96 L 480 96 L 480 150" fill="none" stroke="#68706e" stroke-width="1.3" marker-start="url(#m1)"/>
+      <path d="M 610 78 L 610 96 L 545 96 L 545 150" fill="none" stroke="#b4470f" stroke-width="1.3" marker-start="url(#m2)" marker-end="url(#m2)"/>
+
+      <!-- compute band -->
+      <text x="36" y="232" font-size="10.5" letter-spacing="1.4" fill="#68706e">ECS FARGATE — SCHEDULED TASKS (EVENTBRIDGE SCHEDULER)</text>
+
+      <rect x="36" y="244" width="212" height="76" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="142" y="268" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">Feeder</text>
+      <text x="142" y="285" text-anchor="middle" font-size="10.5" fill="#68706e">pull scans · resolve service</text>
+      <text x="142" y="299" text-anchor="middle" font-size="10.5" fill="#68706e">identity from AWS tags</text>
+      <text x="142" y="313" text-anchor="middle" font-size="10" fill="#b4470f" font-family="monospace">hourly</text>
+
+      <rect x="264" y="244" width="212" height="76" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="370" y="268" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">Reconciler</text>
+      <text x="370" y="285" text-anchor="middle" font-size="10.5" fill="#68706e">positive-confirmation closure</text>
+      <text x="370" y="299" text-anchor="middle" font-size="10.5" fill="#68706e">staleness watchdog · recurrence</text>
+      <text x="370" y="313" text-anchor="middle" font-size="10" fill="#b4470f" font-family="monospace">after each feed</text>
+
+      <rect x="492" y="244" width="212" height="76" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="598" y="268" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">GitHub sync worker</text>
+      <text x="598" y="285" text-anchor="middle" font-size="10.5" fill="#68706e">owner resolve · issue lifecycle</text>
+      <text x="598" y="299" text-anchor="middle" font-size="10.5" fill="#68706e">closure = claim, scan = truth</text>
+      <text x="598" y="313" text-anchor="middle" font-size="10" fill="#b4470f" font-family="monospace">15 min · polls, no inbound</text>
+
+      <rect x="720" y="244" width="264" height="76" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="852" y="268" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">DefectDojo · ECS service</text>
+      <text x="852" y="285" text-anchor="middle" font-size="10.5" fill="#68706e">Django + Celery workers</text>
+      <text x="852" y="300" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">container :8080 ← ALB :443</text>
+      <text x="852" y="314" text-anchor="middle" font-size="10.5" fill="#68706e">internal ALB · Okta SAML</text>
+
+      <!-- aws services band -->
+      <text x="36" y="372" font-size="10.5" letter-spacing="1.4" fill="#68706e">MANAGED SERVICES</text>
+
+      <rect x="36" y="384" width="212" height="70" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="142" y="408" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">RDS PostgreSQL</text>
+      <text x="142" y="425" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">:5432 · sg-restricted</text>
+      <text x="142" y="440" text-anchor="middle" font-size="10.5" fill="#68706e">dojo schema + feeder state</text>
+
+      <rect x="264" y="384" width="212" height="70" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="370" y="408" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">ElastiCache Redis</text>
+      <text x="370" y="425" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">:6379 · Celery broker</text>
+      <text x="370" y="440" text-anchor="middle" font-size="10.5" fill="#68706e">DefectDojo tasks only</text>
+
+      <rect x="492" y="384" width="212" height="70" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="598" y="408" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">Secrets Manager</text>
+      <text x="598" y="425" text-anchor="middle" font-size="10.5" fill="#68706e">Qualys · Sysdig · GitHub App key</text>
+      <text x="598" y="440" text-anchor="middle" font-size="10.5" fill="#68706e">rotation enabled · VPC endpoint</text>
+
+      <rect x="720" y="384" width="264" height="70" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="852" y="404" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">Bedrock · VPC endpoint :443</text>
+      <text x="852" y="421" text-anchor="middle" font-size="10.5" fill="#68706e">issue-body drafting · advisory only</text>
+      <text x="852" y="436" text-anchor="middle" font-size="10.5" fill="#b4470f">never in identity, dedup or closure</text>
+      <text x="852" y="449" text-anchor="middle" font-size="10.5" fill="#68706e">human-in-loop for state changes</text>
+
+      <!-- observability -->
+      <text x="36" y="502" font-size="10.5" letter-spacing="1.4" fill="#68706e">OBSERVABILITY &amp; REPORTING</text>
+
+      <rect x="36" y="514" width="440" height="52" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="256" y="536" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">Amazon Managed Grafana</text>
+      <text x="256" y="553" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">→ RDS :5432 as grafana_ro (SELECT only) · Okta SSO</text>
+
+      <rect x="492" y="514" width="492" height="52" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="738" y="536" text-anchor="middle" font-size="13" font-weight="600" fill="#16211f">CloudWatch + CloudTrail</text>
+      <text x="738" y="553" text-anchor="middle" font-size="10.5" fill="#68706e">task logs · alarm on feed failure &amp; circuit-breaker trip · audit export → SecOps</text>
+
+      <!-- internal arrows -->
+      <path d="M 142 320 L 142 384" stroke="#68706e" stroke-width="1.3" marker-end="url(#m1)"/>
+      <path d="M 370 320 L 370 384" stroke="#68706e" stroke-width="1.3" marker-end="url(#m1)"/>
+      <path d="M 598 320 L 598 384" stroke="#68706e" stroke-width="1.3" marker-end="url(#m1)"/>
+      <path d="M 852 320 L 852 384" stroke="#68706e" stroke-width="1.3" marker-end="url(#m1)"/>
+      <path d="M 248 282 L 264 282" stroke="#68706e" stroke-width="1.2" marker-end="url(#m1)"/>
+      <path d="M 476 282 L 492 282" stroke="#68706e" stroke-width="1.2" marker-end="url(#m1)"/>
+      <path d="M 704 282 L 720 282" stroke="#68706e" stroke-width="1.2" marker-end="url(#m1)"/>
+
+      <!-- okta to alb -->
+      <path d="M 870 78 L 870 110" stroke="#68706e" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+      <text x="510" y="630" text-anchor="middle" font-size="11.5" fill="#68706e">No inbound path from the internet. GitHub state is polled; users reach DefectDojo and Grafana via internal ALB with Okta SAML.</text>
+      <text x="510" y="650" text-anchor="middle" font-size="11.5" fill="#68706e">Feeder reads AWS Resource Groups Tagging API for the service map — the map is derived, not maintained.</text>
+    </svg>
+  </figure>
+
+  <div class="prose">
+    <p>Everything runs in private subnets. The only egress is 443 through the NAT gateway to three allow-listed destinations, and the only inbound is Okta-authenticated users on the internal ALB. We poll GitHub rather than receiving webhooks, which removes the one inbound internet exposure the design would otherwise need — at the cost of up to 15 minutes' latency on issue-state changes, which is acceptable for this workload.</p>
+  </div>
+</section>
+
+<!-- ==================== INGEST FLOW ==================== -->
+<section id="flow-ingest">
+  <div class="sec-head"><h2>Data flow — ingest &amp; identity</h2><span class="sec-tag">DFD 1</span></div>
+
+  <figure>
+    <figcaption>Fig 2 — Scan ingestion and identity resolution, per scheduled run</figcaption>
+    <svg viewBox="0 0 1020 470" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif,system-ui,sans-serif">
+      <defs>
+        <marker id="f1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0e5f5b"/></marker>
+        <marker id="f2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b4470f"/></marker>
+      </defs>
+
+      <rect x="30" y="30" width="180" height="54" rx="5" fill="#f1efe9" stroke="#a9a69c" stroke-dasharray="4 3"/>
+      <text x="120" y="53" text-anchor="middle" font-size="12.5" font-weight="600" fill="#3a3f3d">Scanner APIs</text>
+      <text x="120" y="70" text-anchor="middle" font-size="10.5" fill="#68706e">raw findings + asset refs</text>
+
+      <path d="M 210 57 L 262 57" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#f1)"/>
+      <text x="236" y="47" text-anchor="middle" font-size="9.5" fill="#68706e" font-family="monospace">1</text>
+
+      <rect x="264" y="30" width="200" height="54" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="364" y="53" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Feeder: pull &amp; stage</text>
+      <text x="364" y="70" text-anchor="middle" font-size="10.5" fill="#68706e">async Qualys report handling</text>
+
+      <path d="M 464 57 L 516 57" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#f1)"/>
+      <text x="490" y="47" text-anchor="middle" font-size="9.5" fill="#68706e" font-family="monospace">2</text>
+
+      <rect x="518" y="30" width="230" height="54" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="633" y="53" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Identity resolver</text>
+      <text x="633" y="70" text-anchor="middle" font-size="10.5" fill="#68706e">instance → logical service</text>
+
+      <rect x="790" y="18" width="200" height="78" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="890" y="42" text-anchor="middle" font-size="12" font-weight="600" fill="#16211f">AWS Tagging API</text>
+      <text x="890" y="59" text-anchor="middle" font-size="10.5" fill="#68706e">tags · ASG · ECS service</text>
+      <text x="890" y="74" text-anchor="middle" font-size="10.5" fill="#68706e">EKS labels</text>
+      <text x="890" y="89" text-anchor="middle" font-size="9.5" fill="#0e5f5b" font-family="monospace">live lookup, cached 1h</text>
+
+      <path d="M 748 45 L 790 45" stroke="#0e5f5b" stroke-width="1.3" marker-end="url(#f1)"/>
+      <path d="M 790 68 L 748 68" stroke="#0e5f5b" stroke-width="1.3" marker-end="url(#f1)"/>
+
+      <!-- branch -->
+      <path d="M 633 84 L 633 132" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#f1)"/>
+
+      <rect x="440" y="134" width="386" height="60" rx="5" fill="#fff" stroke="#16211f"/>
+      <text x="633" y="157" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Service resolved?</text>
+      <text x="633" y="176" text-anchor="middle" font-size="10.5" fill="#68706e">every finding must carry a logical service key before submission</text>
+
+      <path d="M 826 164 L 900 164 L 900 214" fill="none" stroke="#b4470f" stroke-width="1.5" marker-end="url(#f2)"/>
+      <text x="915" y="188" font-size="9.5" fill="#b4470f" font-family="monospace">no</text>
+
+      <rect x="790" y="216" width="200" height="66" rx="5" fill="#f7e8de" stroke="#b4470f"/>
+      <text x="890" y="238" text-anchor="middle" font-size="12" font-weight="600" fill="#b4470f">Unresolved queue</text>
+      <text x="890" y="255" text-anchor="middle" font-size="10.5" fill="#68706e">tagged product in Dojo</text>
+      <text x="890" y="270" text-anchor="middle" font-size="10.5" fill="#68706e">coverage metric + alert</text>
+
+      <path d="M 633 194 L 633 240" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#f1)"/>
+      <text x="645" y="222" font-size="9.5" fill="#0e5f5b" font-family="monospace">yes · 3</text>
+
+      <rect x="440" y="242" width="386" height="70" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="633" y="264" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Submit: reimport-scan</text>
+      <text x="633" y="281" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">POST /api/v2/reimport-scan/ · test_id from registry</text>
+      <text x="633" y="297" text-anchor="middle" font-size="10.5" fill="#68706e">service field = logical key · close_old_findings=false</text>
+
+      <rect x="30" y="242" width="230" height="70" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="145" y="266" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Feeder state</text>
+      <text x="145" y="283" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">test_registry(source,service)→id</text>
+      <text x="145" y="299" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">last_assessed(service)→ts</text>
+
+      <path d="M 260 262 L 440 262" stroke="#0e5f5b" stroke-width="1.3" marker-end="url(#f1)"/>
+      <path d="M 440 292 L 260 292" stroke="#0e5f5b" stroke-width="1.3" marker-end="url(#f1)"/>
+      <text x="350" y="252" text-anchor="middle" font-size="9.5" fill="#68706e" font-family="monospace">test_id lookup / update last_assessed</text>
+
+      <path d="M 633 312 L 633 356" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#f1)"/>
+      <text x="645" y="338" font-size="9.5" fill="#0e5f5b" font-family="monospace">4</text>
+
+      <rect x="440" y="358" width="386" height="76" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="633" y="380" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">DefectDojo: hash &amp; match</text>
+      <text x="633" y="397" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">hash(CVE · component · version · service)</text>
+      <text x="633" y="412" text-anchor="middle" font-size="10.5" fill="#68706e">endpoints excluded from identity · instance stored as Endpoint</text>
+      <text x="633" y="427" text-anchor="middle" font-size="10.5" fill="#0e5f5b">match → same finding continues · no match → new finding</text>
+
+      <rect x="30" y="358" width="330" height="76" rx="5" fill="#f7e8de" stroke="#b4470f"/>
+      <text x="195" y="382" text-anchor="middle" font-size="12.5" font-weight="600" fill="#b4470f">Circuit breaker</text>
+      <text x="195" y="399" text-anchor="middle" font-size="10.5" fill="#68706e">if a run would close &gt; n% of open findings:</text>
+      <text x="195" y="414" text-anchor="middle" font-size="10.5" fill="#68706e">halt, alarm, hold submission for review</text>
+      <text x="195" y="429" text-anchor="middle" font-size="10" fill="#b4470f" font-family="monospace">guards against partial-scan wipeouts</text>
+
+      <path d="M 440 396 L 360 396" stroke="#b4470f" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#f2)"/>
+    </svg>
+  </figure>
+
+  <div class="note"><strong>The invariant this flow protects:</strong> nothing reaches DefectDojo without a logical service key, and nothing instance-derived participates in finding identity. Every downstream number depends on these two rules holding.</div>
+</section>
+
+<!-- ==================== CLOSURE FLOW ==================== -->
+<section id="flow-close">
+  <div class="sec-head"><h2>Data flow — closure &amp; reconciliation</h2><span class="sec-tag">DFD 2</span></div>
+
+  <figure>
+    <figcaption>Fig 3 — Positive-confirmation closure, per reconciler run</figcaption>
+    <svg viewBox="0 0 1020 400" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif,system-ui,sans-serif">
+      <defs>
+        <marker id="c1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0e5f5b"/></marker>
+        <marker id="c2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b4470f"/></marker>
+      </defs>
+
+      <rect x="30" y="30" width="250" height="58" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="155" y="53" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Reconciler wakes</text>
+      <text x="155" y="71" text-anchor="middle" font-size="10.5" fill="#68706e">for each open finding's service:</text>
+
+      <path d="M 280 59 L 340 59" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#c1)"/>
+
+      <rect x="342" y="30" width="340" height="58" rx="5" fill="#fff" stroke="#16211f"/>
+      <text x="512" y="53" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Was this service assessed this cycle?</text>
+      <text x="512" y="71" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">last_assessed(service) ≥ cycle start?</text>
+
+      <!-- not assessed branch -->
+      <path d="M 682 59 L 760 59" stroke="#b4470f" stroke-width="1.5" marker-end="url(#c2)"/>
+      <text x="720" y="49" text-anchor="middle" font-size="9.5" fill="#b4470f" font-family="monospace">no</text>
+
+      <rect x="762" y="30" width="228" height="58" rx="5" fill="#f7e8de" stroke="#b4470f"/>
+      <text x="876" y="53" text-anchor="middle" font-size="12" font-weight="600" fill="#b4470f">NOT ASSESSED</text>
+      <text x="876" y="71" text-anchor="middle" font-size="10.5" fill="#68706e">finding untouched · SLA paused</text>
+
+      <path d="M 876 88 L 876 130" stroke="#b4470f" stroke-width="1.3" marker-end="url(#c2)"/>
+
+      <rect x="700" y="132" width="290" height="58" rx="5" fill="#f7e8de" stroke="#b4470f"/>
+      <text x="845" y="155" text-anchor="middle" font-size="12" font-weight="600" fill="#b4470f">Staleness watchdog</text>
+      <text x="845" y="173" text-anchor="middle" font-size="10.5" fill="#68706e">unassessed &gt; 14d → its own finding + alert</text>
+
+      <!-- assessed branch -->
+      <path d="M 512 88 L 512 130" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#c1)"/>
+      <text x="524" y="112" font-size="9.5" fill="#0e5f5b" font-family="monospace">yes</text>
+
+      <rect x="342" y="132" width="340" height="58" rx="5" fill="#fff" stroke="#16211f"/>
+      <text x="512" y="155" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Is the vulnerability still present?</text>
+      <text x="512" y="173" text-anchor="middle" font-size="10.5" fill="#68706e">checked against the fresh scan of the same service</text>
+
+      <!-- still present -->
+      <path d="M 342 161 L 262 161" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#c1)"/>
+      <text x="302" y="151" text-anchor="middle" font-size="9.5" fill="#68706e" font-family="monospace">yes</text>
+
+      <rect x="30" y="132" width="230" height="58" rx="5" fill="#fff" stroke="#7ba5a2"/>
+      <text x="145" y="155" text-anchor="middle" font-size="12" font-weight="600" fill="#16211f">Remains open</text>
+      <text x="145" y="173" text-anchor="middle" font-size="10.5" fill="#68706e">age clock continues from first detection</text>
+
+      <path d="M 145 190 L 145 232" stroke="#0e5f5b" stroke-width="1.3" marker-end="url(#c1)"/>
+      <text x="157" y="215" font-size="9.5" fill="#68706e" font-family="monospace">if was mitigated</text>
+
+      <rect x="30" y="234" width="230" height="58" rx="5" fill="#fff" stroke="#7ba5a2"/>
+      <text x="145" y="257" text-anchor="middle" font-size="12" font-weight="600" fill="#16211f">Reactivated</text>
+      <text x="145" y="275" text-anchor="middle" font-size="10.5" fill="#68706e" font-family="monospace">recurrence_count += 1</text>
+
+      <!-- gone -->
+      <path d="M 512 190 L 512 232" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#c1)"/>
+      <text x="524" y="215" font-size="9.5" fill="#0e5f5b" font-family="monospace">no — absent from scan</text>
+
+      <rect x="342" y="234" width="340" height="58" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="512" y="257" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Close as remediated</text>
+      <text x="512" y="275" text-anchor="middle" font-size="10.5" fill="#68706e">mitigated timestamp = scan time · MTTR recorded</text>
+
+      <path d="M 512 292 L 512 330" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#c1)"/>
+
+      <rect x="342" y="332" width="340" height="50" rx="5" fill="#fff" stroke="#7ba5a2"/>
+      <text x="512" y="353" text-anchor="middle" font-size="12" font-weight="600" fill="#16211f">Signal sync worker</text>
+      <text x="512" y="370" text-anchor="middle" font-size="10.5" fill="#68706e">close linked GitHub issue with evidence comment</text>
+
+      <text x="155" y="360" text-anchor="middle" font-size="11" fill="#b4470f" font-weight="600">Absence of data is never</text>
+      <text x="155" y="377" text-anchor="middle" font-size="11" fill="#b4470f" font-weight="600">evidence of remediation.</text>
+    </svg>
+  </figure>
+</section>
+
+<!-- ==================== SYNC FLOW ==================== -->
+<section id="flow-sync">
+  <div class="sec-head"><h2>Data flow — GitHub synchronisation</h2><span class="sec-tag">DFD 3</span></div>
+
+  <figure>
+    <figcaption>Fig 4 — Issue lifecycle, both directions, per sync run (15 min poll)</figcaption>
+    <svg viewBox="0 0 1020 430" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif,system-ui,sans-serif">
+      <defs>
+        <marker id="s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0e5f5b"/></marker>
+        <marker id="s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b4470f"/></marker>
+      </defs>
+
+      <text x="30" y="30" font-size="10.5" letter-spacing="1.4" fill="#68706e">OUTBOUND — UVM → GITHUB</text>
+
+      <rect x="30" y="44" width="220" height="58" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="140" y="67" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">New / changed findings</text>
+      <text x="140" y="85" text-anchor="middle" font-size="10.5" fill="#68706e">read via DefectDojo API</text>
+
+      <path d="M 250 73 L 302 73" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#s1)"/>
+
+      <rect x="304" y="44" width="230" height="58" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="419" y="67" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Owner resolver</text>
+      <text x="419" y="85" text-anchor="middle" font-size="10.5" fill="#68706e">service → repo → CODEOWNERS</text>
+
+      <path d="M 534 73 L 586 73" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#s1)"/>
+
+      <rect x="588" y="44" width="230" height="58" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="703" y="63" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Aggregate &amp; template</text>
+      <text x="703" y="80" text-anchor="middle" font-size="10.5" fill="#68706e">one issue per service × CVE</text>
+      <text x="703" y="95" text-anchor="middle" font-size="10" fill="#68706e">Bedrock drafts body · advisory only</text>
+
+      <path d="M 818 73 L 870 73" stroke="#b4470f" stroke-width="1.5" marker-end="url(#s2)"/>
+      <text x="844" y="63" text-anchor="middle" font-size="9.5" fill="#b4470f" font-family="monospace">443</text>
+
+      <rect x="872" y="44" width="118" height="58" rx="5" fill="#f1efe9" stroke="#a9a69c" stroke-dasharray="4 3"/>
+      <text x="931" y="67" text-anchor="middle" font-size="12" font-weight="600" fill="#3a3f3d">GitHub</text>
+      <text x="931" y="85" text-anchor="middle" font-size="10" fill="#68706e" font-family="monospace">App · least-priv</text>
+
+      <rect x="304" y="126" width="514" height="46" rx="5" fill="#f7e8de" stroke="#b4470f"/>
+      <text x="561" y="145" text-anchor="middle" font-size="11.5" font-weight="600" fill="#b4470f">Rate guard: batch writes · respect secondary limits · dry-run mode for new rules</text>
+      <text x="561" y="162" text-anchor="middle" font-size="10.5" fill="#68706e">unresolvable owner → default security queue, reported — never dropped</text>
+
+      <text x="30" y="216" font-size="10.5" letter-spacing="1.4" fill="#68706e">INBOUND — GITHUB → UVM (POLLED)</text>
+
+      <rect x="872" y="230" width="118" height="58" rx="5" fill="#f1efe9" stroke="#a9a69c" stroke-dasharray="4 3"/>
+      <text x="931" y="253" text-anchor="middle" font-size="12" font-weight="600" fill="#3a3f3d">GitHub</text>
+      <text x="931" y="271" text-anchor="middle" font-size="10" fill="#68706e">issue closed</text>
+
+      <path d="M 870 259 L 818 259" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#s1)"/>
+
+      <rect x="588" y="230" width="230" height="58" rx="5" fill="#fff" stroke="#b4470f" stroke-width="2"/>
+      <text x="703" y="253" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Sync worker: poll</text>
+      <text x="703" y="271" text-anchor="middle" font-size="10.5" fill="#68706e">closure detected → mark as claim</text>
+
+      <path d="M 588 259 L 536 259" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#s1)"/>
+
+      <rect x="304" y="230" width="230" height="58" rx="5" fill="#fff" stroke="#16211f"/>
+      <text x="419" y="249" text-anchor="middle" font-size="12.5" font-weight="600" fill="#16211f">Next scan confirms?</text>
+      <text x="419" y="266" text-anchor="middle" font-size="10.5" fill="#68706e">waits for reconciler verdict</text>
+      <text x="419" y="281" text-anchor="middle" font-size="10.5" fill="#68706e">on the same service</text>
+
+      <path d="M 419 288 L 419 330" stroke="#0e5f5b" stroke-width="1.5" marker-end="url(#s1)"/>
+      <text x="431" y="313" font-size="9.5" fill="#0e5f5b" font-family="monospace">confirmed gone</text>
+
+      <rect x="304" y="332" width="230" height="52" rx="5" fill="#e3edec" stroke="#7ba5a2"/>
+      <text x="419" y="353" text-anchor="middle" font-size="12" font-weight="600" fill="#16211f">Finding closes</text>
+      <text x="419" y="370" text-anchor="middle" font-size="10.5" fill="#68706e">issue gets evidence comment</text>
+
+      <path d="M 304 259 L 252 259" stroke="#b4470f" stroke-width="1.5" marker-end="url(#s2)"/>
+      <text x="278" y="249" text-anchor="middle" font-size="9.5" fill="#b4470f" font-family="monospace">still present</text>
+
+      <rect x="30" y="230" width="220" height="58" rx="5" fill="#f7e8de" stroke="#b4470f"/>
+      <text x="140" y="253" text-anchor="middle" font-size="12" font-weight="600" fill="#b4470f">Reopen issue</text>
+      <text x="140" y="271" text-anchor="middle" font-size="10.5" fill="#68706e">discrepancy comment + report</text>
+
+      <text x="140" y="360" text-anchor="middle" font-size="11" fill="#68706e">Developers can claim a fix;</text>
+      <text x="140" y="377" text-anchor="middle" font-size="11" fill="#68706e">only a scan can prove one.</text>
+    </svg>
+  </figure>
+</section>
+
+<!-- ==================== NETWORK ==================== -->
+<section id="network">
+  <div class="sec-head"><h2>Network, ports &amp; access matrix</h2><span class="sec-tag">For SG / NACL review</span></div>
+
+  <h3>Egress (via NAT gateway, allow-listed)</h3>
+  <table>
+    <tr><th>Source</th><th>Destination</th><th>Port</th><th>Protocol</th><th>Purpose</th></tr>
+    <tr><td>Feeder task</td><td class="mono">qualysapi.&lt;platform&gt;.qualys.com</td><td class="mono dir-out">443</td><td>HTTPS</td><td>Pull host detections &amp; asset tags</td></tr>
+    <tr><td>Feeder task</td><td class="mono">api.&lt;region&gt;.sysdig.com</td><td class="mono dir-out">443</td><td>HTTPS</td><td>Pull vulnerability reports</td></tr>
+    <tr><td>Sync worker</td><td class="mono">api.github.com</td><td class="mono dir-out">443</td><td>HTTPS</td><td>Issue create / update / poll (GitHub App JWT + installation token)</td></tr>
+  </table>
+
+  <h3>Internal (security-group to security-group)</h3>
+  <table>
+    <tr><th>Source SG</th><th>Destination SG</th><th>Port</th><th>Purpose</th></tr>
+    <tr><td>ALB (internal)</td><td>DefectDojo service</td><td class="mono dir-int">8080</td><td>UI + API, TLS terminated at ALB</td></tr>
+    <tr><td>DefectDojo, Feeder, Reconciler, Sync worker</td><td>RDS Postgres</td><td class="mono dir-int">5432</td><td>App schema + feeder state; each component under its own DB role</td></tr>
+    <tr><td>DefectDojo (web + Celery)</td><td>ElastiCache Redis</td><td class="mono dir-int">6379</td><td>Task broker — DefectDojo only; workers don't touch Redis</td></tr>
+    <tr><td>Feeder, Reconciler, Sync worker</td><td>DefectDojo service</td><td class="mono dir-int">8080</td><td>REST API (reimport, finding reads, status updates) via internal ALB</td></tr>
+    <tr><td>Managed Grafana</td><td>RDS Postgres</td><td class="mono dir-int">5432</td><td><span class="mono">grafana_ro</span> role — SELECT only, no write path</td></tr>
+    <tr><td>All tasks</td><td>VPC endpoints (Secrets Manager, Bedrock, Tagging API, CloudWatch)</td><td class="mono dir-int">443</td><td>Keeps AWS API traffic off the NAT</td></tr>
+  </table>
+
+  <h3>Inbound (user-facing, internal network only)</h3>
+  <table>
+    <tr><th>Source</th><th>Destination</th><th>Port</th><th>Auth</th><th>Notes</th></tr>
+    <tr><td>Corporate network / VPN CIDR</td><td>Internal ALB → DefectDojo</td><td class="mono dir-in">443</td><td>Okta SAML</td><td>Local passwords disabled after SSO cutover; break-glass admin documented &amp; alerted</td></tr>
+    <tr><td>Corporate network / VPN CIDR</td><td>Managed Grafana</td><td class="mono dir-in">443</td><td>Okta SSO</td><td>Viewer role default; editors limited to security team</td></tr>
+    <tr><td colspan="5" style="color:var(--signal);font-weight:600">No inbound from the public internet anywhere. GitHub webhooks intentionally not used — state is polled outbound.</td></tr>
+  </table>
+
+  <h3>Explicitly not open</h3>
+  <table>
+    <tr><th>Path</th><th>Why it stays closed</th></tr>
+    <tr><td class="mono">internet → anything</td><td>No public listeners. The one candidate (GitHub webhooks) is replaced by outbound polling.</td></tr>
+    <tr><td class="mono">workers → Redis :6379</td><td>Custom services queue nothing; Redis belongs to DefectDojo's Celery alone. Narrower blast radius.</td></tr>
+    <tr><td class="mono">Grafana → Dojo API</td><td>Reporting reads the database, not the app — no service account with API write scope for a read-only concern.</td></tr>
+    <tr><td class="mono">DefectDojo → internet</td><td>Dojo itself has no egress requirement in this design; the feeder and sync worker do the talking.</td></tr>
+  </table>
+
+  <div class="note"><strong>Review checkpoint:</strong> the four "not open" rows are as load-bearing as the open ones. If a future change proposes opening any of them, that proposal should route through security review — each closure encodes a deliberate trust boundary.</div>
+</section>
+
+</div>
+</body>
+</html>
